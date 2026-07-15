@@ -1,15 +1,12 @@
 [project]
 name = "rvtdocs-mcp"
-version = "0.2.0"
-description = "Deterministic RVTDocs MCP server for low-retry API lookups"
-requires-python = ">=3.14"
+version = "1.0.0"
+description = "Local search-first Revit API documentation MCP server"
+requires-python = ">=3.12"
 dependencies = [
 	"mcp>=1.28.1",
 	"httpx>=0.28",
 	"trafilatura>=2.0.0",
-	"readability-lxml>=0.8.4.1",
-	"selectolax>=0.4.10",
-	"pydantic>=2.13.4",
 ]
 
 [project.scripts]

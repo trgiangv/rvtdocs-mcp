@@ -2,14 +2,15 @@
 __pycache__/
 *.py[cod]
 *.db
+*.duckdb
 *.sqlite
-*.json.migrated
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+.hypothesis/
 .coverage
 htmlcov/
 dist/
 build/
 *.egg-info/
-benchmarks/reports/
+.cursor/

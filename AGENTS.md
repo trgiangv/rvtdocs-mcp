@@ -1,46 +1,95 @@
-# AGENTS.md
+# AGENTS
 
-## Repo layout
+## Overview
 
-- Runtime package code lives under `src/`.
-- Benchmarks write generated artifacts into `benchmarks/reports/`.
-- Internal user-facing docs live under `src/docs/`.
-- Keep top-level `README.md` short and user-facing; move agent workflow detail here or into `src/docs/`.
+rvtdocs-mcp is a local-first MCP server for Revit API documentation exploration.
+Downloads the full API tree index from rvtdocs.com once per version, caches in AppData,
+then provides instant keyword search, namespace browsing, version comparison, and page
+fetching — all offline after initial download.
 
-## Validated commands
+## Architecture
 
-- Local server: `uv run --python 3.14 rvtdocs-mcp`
-- Local module entry: `uv run --python 3.14 python -m src.server`
-- Local `uvx` source run: `uvx --from <absolute-path-to-repo> --python 3.14 rvtdocs-mcp`
-- GitHub `uvx` run: `uvx --from git+https://github.com/trgiangv/rvtdocs-mcp.git --python 3.14 rvtdocs-mcp`
-- Benchmark runner: `uv run --python 3.14 python -m src.benchmarking.runner --mode trust`
-- Rare matrix: `uv run --python 3.14 python -m src.benchmarking.rare_matrix --years 2022,2023,2024,2025,2026,2027 --mode trust`
-- Smoke check: `uv run --python 3.14 python -m compileall src`
+```
+rvtdocs.com/static/json_trees/sidebar_{year}.json (7MB per year)
+    ↓ (download once)
+%APPDATA%/rvtdocs-mcp/revit_{year}.json (cached permanently)
+    ↓ (load ~350ms)
+In-memory index (28K entries per year)
+    ↓
+Tools: search (7ms) | scan (1ms) | diff (1ms) | fetch (network)
+```
 
-## Agent usage notes
+## Tools (4 total)
 
-- Prefer `rvtdocs_scan` first when you only need existence or trust signals.
-- Use `rvtdocs_fetch(..., mode="full")` when content evidence is required.
-- Use `rvtdocs_debug` only for routing or extraction triage.
-- Current output quality signals include `http.reasonCode`, `extracted.confidence`, `extracted.reasonCode`, `extracted.evidence`, and `extracted.tokenStats`.
+| Tool | Purpose | Mode | Latency |
+|------|---------|------|---------|
+| `rvtdocs_search` | Keyword search across 28K API entries | Local index | ~7ms |
+| `rvtdocs_scan` | Browse namespace or class members | Local index | ~1ms |
+| `rvtdocs_diff` | Compare API between two Revit versions | Local index | ~1ms |
+| `rvtdocs_fetch` | Fetch detailed page content by URL | Network + cache | 50-500ms |
 
-## Benchmark and validation
+## Project Structure
 
-- Seed file: `benchmarks/query-seeds.v1.json`
-- Benchmark spec: `benchmarks/benchmark-spec.v1.md`
-- Reports are written to `benchmarks/reports/`
-- No dedicated automated test suite exists yet; rely on smoke checks and benchmark help commands.
+```
+src/
+  server.py           # FastMCP entry point (wiring only)
+  config.py           # Constants (BASE_URL, years, limits)
+  cache_store.py      # In-memory LRU page cache
+  fetcher.py          # HTTP client with cache
+  extractor.py        # HTML -> text (trafilatura)
+  search/
+    __init__.py
+    tree_index.py     # Core: download, index, search, scan, scoring
+  tools/
+    __init__.py       # Tool registration
+    search.py         # rvtdocs_search (sync, local)
+    scan.py           # rvtdocs_scan (sync, local)
+    diff.py           # rvtdocs_diff (sync, local)
+    fetch.py          # rvtdocs_fetch (async, network)
+```
 
-## Environment
+## Commands
 
-- Optional cache env: `RVTDOCS_MCP_CACHE_FILE`
-- Optional parser mode env: `RVTDOCS_MCP_PARSER_MODE=auto|trafilatura|readability|selectolax|builtin`
-- Telemetry envs are documented in `src/docs/setup.md`
+```bash
+uvx --from . rvtdocs-mcp       # Run server (MCP stdio)
+uv run python -c "..."          # Quick test
+```
 
-## Notes for agents
+## Data
 
-- Do not reintroduce `rvtdocs_mcp` import paths unless the package layout is actually changed.
-- Keep README and `src/docs/setup.md` in sync when changing run commands or packaging.
-- The repo currently has no dedicated automated test suite; use smoke checks unless tests are added.
-- Support only local source and GitHub-based `uvx` documentation; do not add PyPI install docs unless publishing is actually adopted.
-- GitHub source docs should use `git+https://github.com/trgiangv/rvtdocs-mcp.git`.
+- Source: `https://rvtdocs.com/static/json_trees/sidebar_{year}.json`
+- Local cache: `%APPDATA%/rvtdocs-mcp/revit_{year}.json` (Win) or `~/.cache/rvtdocs-mcp/` (Unix)
+- Supported years: 2022, 2023, 2024, 2025, 2026, 2027
+- Entries per year: ~28,000 (namespaces, classes, methods, properties, enums, etc.)
+- Download: lazy (first query per year triggers download)
+
+## Design Decisions
+
+- **In-memory over DB**: 28K entries fit in ~2MB RAM. DuckDB/SQLite add complexity without benefit.
+- **Download once**: Tree data is static per Revit version. No periodic refresh needed.
+- **Search-first**: LLMs need discovery, not exact lookup. Vague queries surface namespaces/classes.
+- **Namespace boosting**: Namespaces score 1.5x — always appear at top for broad queries.
+- **Depth scoring**: Shallow FQN (+3) ranked above deep nested members (-2) for exploration.
+- **Sync tools**: search/scan/diff are sync (no await). Only fetch is async (network I/O).
+- **Compact output**: 4 fields per result (fqn, type, url, score) — minimal token cost.
+- **trafilatura**: Reliable HTML→text without custom parsing per page type.
+
+## MCP Config
+
+```json
+{
+  "rvtdocs-mcp": {
+    "type": "stdio",
+    "command": "uvx",
+    "args": ["--from", "c:\\Users\\truon\\source\\repos\\rvtdocs-mcp", "rvtdocs-mcp"]
+  }
+}
+```
+
+## Change Rules
+
+- Adding a tool: create `src/tools/{name}.py`, register in `src/tools/__init__.py`
+- Tree index changes: clear AppData cache files to force re-download
+- Config changes: edit `src/config.py` (single source of truth)
+- All search/scan/diff tools must remain sync (no network I/O)
+- `rvtdocs_fetch` is the only async tool (network required)
